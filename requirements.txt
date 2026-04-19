@@ -1,5 +1,7 @@
-pandas
 numpy
+pandas
 scipy
-python-dotenv
 scikit-learn
+pyyaml
+python-dotenv
+sdv
