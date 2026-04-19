@@ -1,0 +1,10 @@
+model: adaptive_extra
+models:
+  - adaptive_extra
+
+adaptive_extra:
+  model: adaptive_extra
+  enabled: false
+  alpha: 0.5
+  group_column:
+
