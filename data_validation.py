@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def validate_submission(original_df: pd.DataFrame, submission_df: pd.DataFrame) -> list[str]:
     errors = []
 
