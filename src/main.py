@@ -7,9 +7,10 @@ from pathlib import Path
 from src.data.loader import load_source_csv
 from src.data.schema import infer_schema
 from src.data.split import make_train_val_split
+from src.eval.diagnostics import compute_run_diagnostics
 from src.eval.reports import write_comparison_report, write_run_report
 from src.eval.score import compare_runs, compute_total_score
-from src.generate import generate_and_save_submission, generate_synthetic_dataset
+from src.generate import generate_and_save_submission, generate_synthetic_dataset, write_output_notes
 from src.rules.constraints import build_default_constraints
 from src.utils.io import ensure_dir, merge_dicts, read_config, write_json
 from src.utils.logging import get_logger
@@ -32,7 +33,12 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
 
     data = load_source_csv(data_path_obj)
     schema = infer_schema(data)
-    constraints = build_default_constraints(data, schema)
+    constraints = build_default_constraints(
+        data,
+        schema,
+        include_conditional_blanks=bool(run_config.get("include_conditional_blanks", False)),
+        derived_repair_mode=str(run_config.get("derived_repair_mode", "overwrite")),
+    )
     train_df, val_df = make_train_val_split(data, seed=seed, val_frac=run_config.get("val_frac", 0.2))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -43,6 +49,7 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
     logger.info("Loaded data with %s rows and %s columns.", len(data), len(data.columns))
 
     results: list[RunResult] = []
+    selected_params: dict[str, dict[str, float]] = {}
 
     for model_name in run_config.get("models", ["baseline", "copula", "ctgan", "hybrid"]):
         logger.info("Training %s", model_name)
@@ -51,7 +58,11 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
             model_config = _model_config_for_name(run_config, model_name)
             model.fit(train_df, schema, model_config)
 
-            if model_name == "hybrid" and hasattr(model, "grid_search_alpha"):
+            if (
+                model_name == "hybrid"
+                and hasattr(model, "grid_search_alpha")
+                and model_config.get("tune_alpha", True)
+            ):
                 best_alpha, alpha_results = model.grid_search_alpha(
                     train_df=train_df,
                     val_df=val_df,
@@ -61,6 +72,7 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
                     alphas=model_config.get("alphas"),
                 )
                 logger.info("Hybrid best alpha: %.2f", best_alpha)
+                selected_params[model_name] = {"alpha": float(best_alpha)}
                 write_json({"alpha_search": alpha_results, "best_alpha": best_alpha}, artifact_dir / "hybrid_alpha_search.json")
 
             synthetic_val = generate_synthetic_dataset(
@@ -74,9 +86,10 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
                 privacy_min_distance=model_config.get("privacy_min_distance", 0.0),
             )
             metrics = compute_total_score(val_df, synthetic_val, schema, constraints, run_config["score_weights"])
+            diagnostics = compute_run_diagnostics(val_df, synthetic_val, schema)
             model_artifact_dir = ensure_dir(artifact_dir / model_name)
             model_path = model.save(model_artifact_dir / "model.pkl")
-            write_run_report(model_artifact_dir, model_name, metrics)
+            write_run_report(model_artifact_dir, model_name, metrics, diagnostics=diagnostics)
             results.append(
                 RunResult(
                     model_name=model_name,
@@ -106,6 +119,8 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
 
     best_model = create_model(best_result.model_name, seed=seed)
     best_config = _model_config_for_name(run_config, best_result.model_name)
+    if best_result.model_name in selected_params:
+        best_config = merge_dicts(best_config, selected_params[best_result.model_name])
     best_model.fit(data, schema, best_config)
     submission_path = run_dir / f"{best_result.model_name}_submission.csv"
     _, submission_errors = generate_and_save_submission(
@@ -119,6 +134,24 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
         privacy_filter=best_config.get("privacy_filter", False),
         privacy_min_distance=best_config.get("privacy_min_distance", 0.0),
     )
+    submission_note_path = write_output_notes(
+        output_path=submission_path,
+        metadata={
+            "model_name": best_result.model_name,
+            "model_path": best_result.artifact_path,
+            "config_path": str(config_path_obj),
+            "data_path": str(data_path_obj),
+            "n_rows": max(len(data), int(len(data) * run_config.get("n_rows_multiplier", 1.0))),
+            "repair": best_config.get("repair", False),
+            "privacy_filter": best_config.get("privacy_filter", False),
+            "privacy_min_distance": best_config.get("privacy_min_distance", 0.0),
+            "mixed_column_strategy": best_config.get("mixed_column_strategy"),
+            "notes": [
+                "Generated as the best-model submission from `python main.py`.",
+                "See the paired run artifacts for validation metrics and diagnostics.",
+            ],
+        },
+    )
 
     summary = {
         "run_dir": str(run_dir),
@@ -126,6 +159,7 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
         "ranked_runs": ranked,
         "best_model": best_result.model_name,
         "submission_path": str(submission_path),
+        "submission_note_path": str(submission_note_path),
         "submission_errors": submission_errors,
     }
     write_json(summary, run_dir / "summary.json")
