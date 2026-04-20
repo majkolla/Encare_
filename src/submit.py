@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from src.data.loader import save_submission_csv
@@ -26,55 +27,143 @@ def ensure_exact_schema(df: pd.DataFrame, reference_df: pd.DataFrame, schema: Sc
             submission[column.name] = _coerce_object_column(
                 submission[column.name],
                 reference_df[column.name],
+                column,
             )
 
     return submission[schema.column_order]
 
 
-def _coerce_object_column(submission_series: pd.Series, reference_series: pd.Series) -> pd.Series:
+def _coerce_object_column(
+    submission_series: pd.Series,
+    reference_series: pd.Series,
+    column_schema,
+) -> pd.Series:
     series = submission_series.astype("object").copy()
-    reference_non_null = reference_series.dropna()
-
-    if series.isna().all() and not reference_non_null.empty:
-        mode = reference_non_null.mode(dropna=True)
-        fill_value = mode.iloc[0] if not mode.empty else reference_non_null.iloc[0]
-        return pd.Series([fill_value] * len(series), index=series.index, dtype="object")
-
-    non_numeric_token = _find_non_numeric_token(reference_non_null)
-    if non_numeric_token is None:
+    reference_non_null = reference_series.dropna().astype("object")
+    if reference_non_null.empty:
         return series
 
-    non_null_values = series.dropna().astype(str)
-    has_non_numeric = False
-    if not non_null_values.empty:
-        parsed = pd.to_numeric(non_null_values, errors="coerce")
-        has_non_numeric = bool(parsed.isna().any())
-
-    if has_non_numeric:
+    if getattr(column_schema, "mixed_value_kind", None) is None:
+        if series.isna().all():
+            anchor_value = reference_non_null.mode(dropna=True)
+            if not anchor_value.empty and len(series) > 0:
+                series.iloc[0] = anchor_value.iloc[0]
         return series
 
-    if series.isna().any():
-        replacement_index = series[series.isna()].index[0]
-    else:
-        replacement_index = series.index[0]
-    series.loc[replacement_index] = non_numeric_token
+    if series.isna().all():
+        target_non_null = _scaled_target_count(
+            observed_count=len(reference_non_null),
+            observed_total=len(reference_series),
+            target_total=len(series),
+        )
+        fill_indices = _spread_indices(series.index.tolist(), target_non_null)
+        fill_values = _expanded_reference_values(
+            reference_non_null.value_counts(dropna=True, sort=False),
+            len(fill_indices),
+        )
+        if fill_indices and fill_values:
+            series.loc[fill_indices] = fill_values
+        return series
+
+    reference_non_numeric = _reference_non_numeric_counts(reference_non_null)
+    if reference_non_numeric.empty:
+        return series
+
+    desired_non_numeric = _scaled_target_count(
+        observed_count=int(reference_non_numeric.sum()),
+        observed_total=len(reference_series),
+        target_total=len(series),
+    )
+    current_non_numeric = _current_non_numeric_count(series)
+    deficit = max(desired_non_numeric - current_non_numeric, 0)
+    if deficit == 0:
+        return series
+
+    candidate_indices = series[series.isna()].index.tolist()
+    if len(candidate_indices) < deficit:
+        existing_candidates = set(candidate_indices)
+        candidate_indices.extend(
+            idx for idx in series.index.tolist()
+            if idx not in existing_candidates and _looks_numeric_like(series.loc[idx])
+        )
+    if len(candidate_indices) < deficit:
+        existing_candidates = set(candidate_indices)
+        candidate_indices.extend(idx for idx in series.index.tolist() if idx not in existing_candidates)
+
+    fill_indices = _spread_indices(candidate_indices, deficit)
+    fill_values = _expanded_reference_values(reference_non_numeric, len(fill_indices))
+    if fill_indices and fill_values:
+        series.loc[fill_indices] = fill_values
     return series
 
 
-def _find_non_numeric_token(reference_non_null: pd.Series) -> str | None:
-    if reference_non_null.empty:
-        return None
+def _scaled_target_count(
+    observed_count: int,
+    observed_total: int,
+    target_total: int,
+) -> int:
+    if observed_count <= 0 or observed_total <= 0 or target_total <= 0:
+        return 0
 
+    scaled = int(round((observed_count / observed_total) * target_total))
+    return max(1, min(target_total, scaled))
+
+
+def _reference_non_numeric_counts(reference_non_null: pd.Series) -> pd.Series:
     values = reference_non_null.astype(str)
     parsed = pd.to_numeric(values, errors="coerce")
-    non_numeric = values[parsed.isna()]
-    if non_numeric.empty:
-        return None
+    non_numeric_mask = parsed.isna()
+    if not non_numeric_mask.any():
+        return pd.Series(dtype="int64")
+    return values[non_numeric_mask].value_counts(dropna=True, sort=False)
 
-    mode = non_numeric.mode(dropna=True)
-    if not mode.empty:
-        return str(mode.iloc[0])
-    return str(non_numeric.iloc[0])
+
+def _current_non_numeric_count(series: pd.Series) -> int:
+    non_null = series.dropna()
+    if non_null.empty:
+        return 0
+
+    as_text = non_null.astype(str)
+    parsed = pd.to_numeric(as_text, errors="coerce")
+    return int(parsed.isna().sum())
+
+
+def _looks_numeric_like(value: object) -> bool:
+    if pd.isna(value):
+        return False
+    return pd.notna(pd.to_numeric(value, errors="coerce"))
+
+
+def _spread_indices(indices: list[int], count: int) -> list[int]:
+    if count <= 0 or not indices:
+        return []
+    if count >= len(indices):
+        return indices
+
+    positions = np.linspace(0, len(indices) - 1, num=count, dtype=int)
+    return [indices[pos] for pos in positions]
+
+
+def _expanded_reference_values(value_counts: pd.Series, count: int) -> list[object]:
+    if count <= 0 or value_counts.empty:
+        return []
+
+    probabilities = value_counts.astype(float) / float(value_counts.sum())
+    raw_allocations = probabilities * count
+    base_allocations = np.floor(raw_allocations).astype(int)
+    remainder = count - int(base_allocations.sum())
+
+    if remainder > 0:
+        remainders = raw_allocations - base_allocations
+        order = np.argsort(-remainders.to_numpy(dtype=float), kind="stable")
+        for idx in order[:remainder]:
+            base_allocations.iloc[int(idx)] += 1
+
+    expanded: list[object] = []
+    for value, allocation in zip(value_counts.index.tolist(), base_allocations.tolist()):
+        expanded.extend([value] * int(allocation))
+
+    return expanded[:count]
 
 
 def validate_submission(reference_df: pd.DataFrame, submission_df: pd.DataFrame) -> list[str]:
