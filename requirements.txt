@@ -1,7 +1,6 @@
-numpy
 pandas
+numpy
 scipy
+python-dotenv
 scikit-learn
 pyyaml
-python-dotenv
-sdv
