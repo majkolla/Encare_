@@ -84,6 +84,7 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
                 repair=model_config.get("repair", False),
                 privacy_filter=model_config.get("privacy_filter", False),
                 privacy_min_distance=model_config.get("privacy_min_distance", 0.0),
+                privacy_min_distance_quantile=model_config.get("privacy_min_distance_quantile"),
             )
             metrics = compute_total_score(val_df, synthetic_val, schema, constraints, run_config["score_weights"])
             diagnostics = compute_run_diagnostics(val_df, synthetic_val, schema)
@@ -133,6 +134,7 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
         repair=best_config.get("repair", False),
         privacy_filter=best_config.get("privacy_filter", False),
         privacy_min_distance=best_config.get("privacy_min_distance", 0.0),
+        privacy_min_distance_quantile=best_config.get("privacy_min_distance_quantile"),
     )
     submission_note_path = write_output_notes(
         output_path=submission_path,
@@ -145,6 +147,7 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
             "repair": best_config.get("repair", False),
             "privacy_filter": best_config.get("privacy_filter", False),
             "privacy_min_distance": best_config.get("privacy_min_distance", 0.0),
+            "privacy_min_distance_quantile": best_config.get("privacy_min_distance_quantile"),
             "mixed_column_strategy": best_config.get("mixed_column_strategy"),
             "notes": [
                 "Generated as the best-model submission from `python main.py`.",
