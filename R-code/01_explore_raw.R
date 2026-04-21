@@ -17,7 +17,7 @@ library(readr)
 library(purrr)
 
 # paths
-data_path <- "data/raw/synthetic-data-hackaton-sample.csv"
+data_path <- "data/data.csv"
 
 # read data
 # makes column names consistent and easy to use in R (snake_case, lowercase);
