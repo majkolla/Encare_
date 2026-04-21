@@ -69,6 +69,7 @@ def run_training(model_name: str, config_path: str, data_path: str) -> dict:
         repair=model_config.get("repair", False),
         privacy_filter=model_config.get("privacy_filter", False),
         privacy_min_distance=model_config.get("privacy_min_distance", 0.0),
+        privacy_min_distance_quantile=model_config.get("privacy_min_distance_quantile"),
     )
     metrics = compute_total_score(val_df, synthetic_val, schema, constraints, run_config["score_weights"])
     diagnostics = compute_run_diagnostics(val_df, synthetic_val, schema)
