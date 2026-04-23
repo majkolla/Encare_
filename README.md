@@ -2,7 +2,6 @@
 
 This project generates synthetic clinical tabular data for the Encare hackathon. The best review path is the repaired Gaussian copula solution: it learns marginal distributions and cross-column dependence from `data/data.csv`, samples synthetic rows, repairs known clinical constraints, removes exact privacy matches, and writes a schema-valid CSV.
 
-The implementation is deliberately small enough for a judge to inspect quickly. It is not a general synthetic-data framework; it is a practical competition pipeline for a mixed clinical table with numeric fields, categorical fields, dates, times, missing values, and conditional child fields.
 
 ## Summary
 
