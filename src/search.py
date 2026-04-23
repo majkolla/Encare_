@@ -25,6 +25,7 @@ from src.eval.marginals import (
 from src.eval.privacy import privacy_score
 from src.generate import run_generation
 from src.rules.constraints import build_default_constraints
+from src.utils.config import model_config_for_name
 from src.utils.io import ensure_dir, merge_dicts, read_config, write_json, write_markdown
 from src.utils.paths import resolve_repo_path
 
@@ -85,7 +86,7 @@ def run_candidate_search(
     )
 
     model_name = _resolve_model_name(run_config)
-    model_config = _model_config_for_name(run_config, model_name)
+    model_config = model_config_for_name(run_config, model_name)
 
     oversample_grid = _resolve_grid_values(
         explicit_values=oversample_factors,
@@ -458,13 +459,6 @@ def _resolve_model_name(run_config: dict[str, Any]) -> str:
         return str(configured_models[0])
 
     raise ValueError("Candidate search requires a config with one explicit model name.")
-
-
-def _model_config_for_name(run_config: dict[str, Any], model_name: str) -> dict[str, Any]:
-    model_config = run_config.get(model_name, {})
-    if isinstance(model_config, dict):
-        return merge_dicts(run_config, model_config)
-    return dict(run_config)
 
 
 def _resolve_grid_values(

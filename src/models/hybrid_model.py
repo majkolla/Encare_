@@ -71,4 +71,3 @@ class HybridSynthesizer(BaseSynthesizer):
         best = max(results, key=lambda item: item["metrics"]["total_score"])
         self.alpha = float(best["alpha"])
         return self.alpha, results
-

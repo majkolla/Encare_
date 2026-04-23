@@ -16,6 +16,7 @@ from src.models.base import BaseSynthesizer
 from src.rules.repair import repair_dataframe
 from src.rules.constraints import build_default_constraints
 from src.submit import save_validated_submission
+from src.utils.config import model_config_for_name
 from src.utils.io import ensure_dir, merge_dicts, read_config, write_markdown
 from src.utils.paths import resolve_repo_path
 from src.utils.types import Schema
@@ -198,7 +199,7 @@ def run_generation(
     if sample_seed is not None:
         _reseed_model(model, sample_seed)
     model_name = model.__class__.__name__.replace("Synthesizer", "").lower()
-    model_config = _model_config_for_name(run_config, run_config.get("model", model_name))
+    model_config = model_config_for_name(run_config, run_config.get("model", model_name))
 
     if output_path is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -425,13 +426,6 @@ def _normalized_feature_series(series: pd.Series) -> pd.Series:
 def _missingness_feature_series(series: pd.Series) -> pd.Series:
     values = np.where(series.isna(), "__MISSING__", "__PRESENT__")
     return pd.Series(values, index=series.index, dtype="object")
-
-
-def _model_config_for_name(run_config: dict, model_name: str) -> dict:
-    model_config = run_config.get(model_name, {})
-    if isinstance(model_config, dict):
-        return merge_dicts(run_config, model_config)
-    return dict(run_config)
 
 
 def _reseed_model(model: BaseSynthesizer, sample_seed: int) -> None:

@@ -1,0 +1,9 @@
+model: copula
+models:
+  - copula
+
+copula:
+  model: copula
+  repair: true
+  privacy_filter: true
+  privacy_min_distance: 0.0

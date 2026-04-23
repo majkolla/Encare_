@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from typing import Sequence
 
 from src.eval.logic import (
     category_violations,
@@ -37,19 +38,7 @@ def enforce_conditional_blanks(df: pd.DataFrame, constraints: dict) -> pd.DataFr
         if parent not in repaired.columns:
             continue
 
-        parent_values = repaired[parent].astype("object")
-        inactive_mask = pd.Series(False, index=repaired.index)
-
-        inactive_values = {str(value) for value in rule.get("inactive_values", [])}
-        if inactive_values:
-            inactive_mask |= parent_values.astype(str).isin(inactive_values)
-
-        prefixes = [str(prefix) for prefix in rule.get("inactive_prefixes", []) if str(prefix)]
-        if prefixes:
-            parent_text = parent_values.astype(str)
-            for prefix in prefixes:
-                inactive_mask |= parent_text.str.startswith(prefix)
-
+        inactive_mask = _conditional_inactive_mask(repaired[parent], rule)
         if not inactive_mask.any():
             continue
 
@@ -59,6 +48,88 @@ def enforce_conditional_blanks(df: pd.DataFrame, constraints: dict) -> pd.DataFr
             repaired.loc[inactive_mask, child] = np.nan
 
     return repaired
+
+
+def softly_align_conditional_blank_rates(
+    syn_df: pd.DataFrame,
+    real_df: pd.DataFrame,
+    constraints: dict,
+    strength: float = 0.0,
+    min_excess_rate: float = 0.05,
+    include_parents: Sequence[str] | None = None,
+    exclude_parents: Sequence[str] | None = None,
+    include_children: Sequence[str] | None = None,
+    exclude_children: Sequence[str] | None = None,
+    max_blanks_per_rule: int | None = None,
+) -> tuple[pd.DataFrame, list[dict[str, object]]]:
+    clipped_strength = float(np.clip(strength, 0.0, 1.0))
+    min_excess = max(float(min_excess_rate), 0.0)
+    if clipped_strength <= 0.0:
+        return syn_df.copy(), []
+
+    adjusted = syn_df.copy()
+    summary_rows: list[dict[str, object]] = []
+    include_terms = [str(value).strip().lower() for value in (include_parents or []) if str(value).strip()]
+    exclude_terms = [str(value).strip().lower() for value in (exclude_parents or []) if str(value).strip()]
+    include_child_terms = [str(value).strip().lower() for value in (include_children or []) if str(value).strip()]
+    exclude_child_terms = [str(value).strip().lower() for value in (exclude_children or []) if str(value).strip()]
+
+    for rule in constraints.get("conditional_blanks", []):
+        parent = rule.get("parent")
+        if not parent or parent not in adjusted.columns or parent not in real_df.columns:
+            continue
+        if not _rule_parent_selected(str(parent), include_terms, exclude_terms):
+            continue
+
+        real_inactive_mask = _conditional_inactive_mask(real_df[parent], rule)
+        syn_inactive_mask = _conditional_inactive_mask(adjusted[parent], rule)
+        syn_inactive_count = int(syn_inactive_mask.sum())
+        if syn_inactive_count == 0:
+            continue
+
+        for child in rule.get("children", []):
+            if child not in adjusted.columns or child not in real_df.columns:
+                continue
+            if not _rule_parent_selected(str(child), include_child_terms, exclude_child_terms):
+                continue
+
+            real_target_rate = (
+                float(real_df.loc[real_inactive_mask, child].notna().mean())
+                if real_inactive_mask.any()
+                else 0.0
+            )
+            syn_present_indices = adjusted.index[syn_inactive_mask & adjusted[child].notna()].tolist()
+            syn_present_count = len(syn_present_indices)
+            if syn_present_count == 0:
+                continue
+
+            syn_rate = float(syn_present_count / syn_inactive_count)
+            excess_rate = syn_rate - real_target_rate
+            if excess_rate <= min_excess:
+                continue
+
+            target_rate = max(real_target_rate, syn_rate - clipped_strength * excess_rate)
+            target_present_count = int(round(target_rate * syn_inactive_count))
+            blank_count = syn_present_count - target_present_count
+            if max_blanks_per_rule is not None:
+                blank_count = min(blank_count, max(int(max_blanks_per_rule), 0))
+            if blank_count <= 0:
+                continue
+
+            selected_indices = _spread_selection(syn_present_indices, blank_count)
+            adjusted.loc[selected_indices, child] = np.nan
+            summary_rows.append(
+                {
+                    "parent": str(parent),
+                    "child": str(child),
+                    "syn_rate_before": syn_rate,
+                    "real_rate": real_target_rate,
+                    "target_rate": target_rate,
+                    "blanked_rows": len(selected_indices),
+                }
+            )
+
+    return adjusted, summary_rows
 
 
 def recompute_derived_fields(df: pd.DataFrame, constraints: dict) -> pd.DataFrame:
@@ -148,6 +219,39 @@ def _spread_selection(indices: list[int], count: int) -> list[int]:
 
     positions = np.linspace(0, len(indices) - 1, num=count, dtype=int)
     return [indices[pos] for pos in positions]
+
+
+def _conditional_inactive_mask(parent_series: pd.Series, rule: dict) -> pd.Series:
+    parent_values = parent_series.astype("object")
+    inactive_mask = pd.Series(False, index=parent_series.index)
+
+    inactive_values = {str(value) for value in rule.get("inactive_values", [])}
+    if inactive_values:
+        inactive_mask |= parent_values.astype(str).isin(inactive_values)
+
+    prefixes = [str(prefix) for prefix in rule.get("inactive_prefixes", []) if str(prefix)]
+    if prefixes:
+        parent_text = parent_values.astype(str)
+        for prefix in prefixes:
+            inactive_mask |= parent_text.str.startswith(prefix)
+
+    return inactive_mask
+
+
+def _rule_parent_selected(
+    parent: str,
+    include_terms: Sequence[str] | None,
+    exclude_terms: Sequence[str] | None,
+) -> bool:
+    parent_text = parent.lower()
+
+    if include_terms and not any(term in parent_text for term in include_terms):
+        return False
+
+    if exclude_terms and any(term in parent_text for term in exclude_terms):
+        return False
+
+    return True
 
 
 def drop_or_resample_invalid_rows(

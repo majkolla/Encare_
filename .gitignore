@@ -1,0 +1,35 @@
+# Python/runtime noise
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments and machine-specific files
+.venv/
+venv/
+.env
+.env.*
+.codex
+.codex/
+.DS_Store
+*.log
+*.Rproj
+
+# Generated data and model outputs
+data/artifacts/
+data/artifacts_probe/
+data/outputs/*
+!data/outputs/
+!data/outputs/README.md
+results/
+
+# Exploratory or internal experiment history
+docs/
+notebooks/
+R-code/
+approaches/
+configs/copula_ver*.yaml
+configs/*_search*.yaml
+configs/leaderboard_*.yaml

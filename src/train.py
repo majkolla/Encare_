@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from src.data.loader import load_source_csv
 from src.data.schema import infer_schema
@@ -11,6 +10,7 @@ from src.eval.reports import write_run_report
 from src.eval.score import compute_total_score
 from src.generate import generate_synthetic_dataset
 from src.rules.constraints import build_default_constraints
+from src.utils.config import model_config_for_name
 from src.utils.io import ensure_dir, merge_dicts, read_config, write_json
 from src.utils.paths import resolve_repo_path
 from src.utils.registry import create_model
@@ -38,7 +38,7 @@ def run_training(model_name: str, config_path: str, data_path: str) -> dict:
     train_df, val_df = make_train_val_split(df, seed=seed, val_frac=run_config.get("val_frac", 0.2))
 
     model = create_model(model_name, seed=seed)
-    model_config = _model_config_for_name(run_config, model_name)
+    model_config = model_config_for_name(run_config, model_name)
     model.fit(train_df, schema, model_config)
 
     if (
@@ -86,13 +86,6 @@ def run_training(model_name: str, config_path: str, data_path: str) -> dict:
         "note": "This command trains on the train split for validation and saves artifacts only. It does not write a submission CSV.",
         "next_step": f"python -m src.generate --model-path {model_path} --config {config_path_obj} --data {data_path_obj}",
     }
-
-
-def _model_config_for_name(run_config: dict, model_name: str) -> dict:
-    model_config = run_config.get(model_name, {})
-    if isinstance(model_config, dict):
-        return merge_dicts(run_config, model_config)
-    return dict(run_config)
 
 
 def main() -> None:

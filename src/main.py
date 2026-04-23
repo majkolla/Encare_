@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
-from pathlib import Path
 
 from src.data.loader import load_source_csv
 from src.data.schema import infer_schema
@@ -11,7 +10,9 @@ from src.eval.diagnostics import compute_run_diagnostics
 from src.eval.reports import write_comparison_report, write_run_report
 from src.eval.score import compare_runs, compute_total_score
 from src.generate import generate_and_save_submission, generate_synthetic_dataset, write_output_notes
+from src.models.ctgan_model import CTGANSynthesizer
 from src.rules.constraints import build_default_constraints
+from src.utils.config import model_config_for_name
 from src.utils.io import ensure_dir, merge_dicts, read_config, write_json
 from src.utils.logging import get_logger
 from src.utils.paths import resolve_repo_path
@@ -52,61 +53,66 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
     selected_params: dict[str, dict[str, float]] = {}
 
     for model_name in run_config.get("models", ["baseline", "copula", "ctgan", "hybrid"]):
-        logger.info("Training %s", model_name)
-        try:
-            model = create_model(model_name, seed=seed)
-            model_config = _model_config_for_name(run_config, model_name)
-            model.fit(train_df, schema, model_config)
-
-            if (
-                model_name == "hybrid"
-                and hasattr(model, "grid_search_alpha")
-                and model_config.get("tune_alpha", True)
-            ):
-                best_alpha, alpha_results = model.grid_search_alpha(
-                    train_df=train_df,
-                    val_df=val_df,
-                    schema=schema,
-                    constraints=constraints,
-                    weights=run_config["score_weights"],
-                    alphas=model_config.get("alphas"),
-                )
-                logger.info("Hybrid best alpha: %.2f", best_alpha)
-                selected_params[model_name] = {"alpha": float(best_alpha)}
-                write_json({"alpha_search": alpha_results, "best_alpha": best_alpha}, artifact_dir / "hybrid_alpha_search.json")
-
-            synthetic_val = generate_synthetic_dataset(
-                model=model,
-                real_df=train_df,
-                schema=schema,
-                constraints=constraints,
-                n_rows=len(val_df),
-                repair=model_config.get("repair", False),
-                privacy_filter=model_config.get("privacy_filter", False),
-                privacy_min_distance=model_config.get("privacy_min_distance", 0.0),
-                privacy_min_distance_quantile=model_config.get("privacy_min_distance_quantile"),
-            )
-            metrics = compute_total_score(val_df, synthetic_val, schema, constraints, run_config["score_weights"])
-            diagnostics = compute_run_diagnostics(val_df, synthetic_val, schema)
-            model_artifact_dir = ensure_dir(artifact_dir / model_name)
-            model_path = model.save(model_artifact_dir / "model.pkl")
-            write_run_report(model_artifact_dir, model_name, metrics, diagnostics=diagnostics)
-            results.append(
-                RunResult(
-                    model_name=model_name,
-                    metrics=metrics,
-                    artifact_path=str(model_path),
-                )
-            )
-        except Exception as exc:
-            logger.warning("Skipping %s: %s", model_name, exc)
+        skip_reason = _optional_model_skip_reason(model_name)
+        if skip_reason:
+            logger.warning("Skipping %s: %s", model_name, skip_reason)
             results.append(
                 RunResult(
                     model_name=model_name,
                     metrics={"total_score": float("-inf")},
-                    notes=[str(exc)],
+                    notes=[skip_reason],
                 )
             )
+            continue
+
+        logger.info("Training %s", model_name)
+        model = create_model(model_name, seed=seed)
+        model_config = model_config_for_name(run_config, model_name)
+        model.fit(train_df, schema, model_config)
+
+        if (
+            model_name == "hybrid"
+            and hasattr(model, "grid_search_alpha")
+            and model_config.get("tune_alpha", True)
+        ):
+            best_alpha, alpha_results = model.grid_search_alpha(
+                train_df=train_df,
+                val_df=val_df,
+                schema=schema,
+                constraints=constraints,
+                weights=run_config["score_weights"],
+                alphas=model_config.get("alphas"),
+            )
+            logger.info("Hybrid best alpha: %.2f", best_alpha)
+            selected_params[model_name] = {"alpha": float(best_alpha)}
+            write_json(
+                {"alpha_search": alpha_results, "best_alpha": best_alpha},
+                artifact_dir / "hybrid_alpha_search.json",
+            )
+
+        synthetic_val = generate_synthetic_dataset(
+            model=model,
+            real_df=train_df,
+            schema=schema,
+            constraints=constraints,
+            n_rows=len(val_df),
+            repair=model_config.get("repair", False),
+            privacy_filter=model_config.get("privacy_filter", False),
+            privacy_min_distance=model_config.get("privacy_min_distance", 0.0),
+            privacy_min_distance_quantile=model_config.get("privacy_min_distance_quantile"),
+        )
+        metrics = compute_total_score(val_df, synthetic_val, schema, constraints, run_config["score_weights"])
+        diagnostics = compute_run_diagnostics(val_df, synthetic_val, schema)
+        model_artifact_dir = ensure_dir(artifact_dir / model_name)
+        model_path = model.save(model_artifact_dir / "model.pkl")
+        write_run_report(model_artifact_dir, model_name, metrics, diagnostics=diagnostics)
+        results.append(
+            RunResult(
+                model_name=model_name,
+                metrics=metrics,
+                artifact_path=str(model_path),
+            )
+        )
 
     ranked = compare_runs([result for result in results if result.total_score != float("-inf")])
     write_comparison_report(run_dir, ranked)
@@ -119,7 +125,7 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
     logger.info("Best model: %s", best_result.model_name)
 
     best_model = create_model(best_result.model_name, seed=seed)
-    best_config = _model_config_for_name(run_config, best_result.model_name)
+    best_config = model_config_for_name(run_config, best_result.model_name)
     if best_result.model_name in selected_params:
         best_config = merge_dicts(best_config, selected_params[best_result.model_name])
     best_model.fit(data, schema, best_config)
@@ -169,11 +175,12 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
     return summary
 
 
-def _model_config_for_name(run_config: dict, model_name: str) -> dict:
-    model_config = run_config.get(model_name, {})
-    if isinstance(model_config, dict):
-        return merge_dicts(run_config, model_config)
-    return dict(run_config)
+def _optional_model_skip_reason(model_name: str) -> str | None:
+    if model_name not in {"ctgan", "hybrid", "adaptive_extra"}:
+        return None
+    if CTGANSynthesizer.is_backend_available():
+        return None
+    return "optional CTGAN backend is not installed; install `sdv` and `torch` to enable this model"
 
 
 def main() -> None:
