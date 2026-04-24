@@ -35,3 +35,8 @@ copula:
   privacy_filter: true
   privacy_min_distance: 0.0
 ```
+
+
+## Further Investigation 
+
+A Gaussian copula assumes a smooth dependencies between the different marginlized distribution (https://en.wikipedia.org/wiki/Copula_(statistics)). Since there is no reason to assume this smoothness, and instead we want to build something that can approximate the non smooth dependencies, this can be done by using for example a CTGAN in addition to the copula $q(x) = q_{copula}\lambda + (1 - \lambda)q_{CTAGN}$. Furthermore, since we have categorical combinations, we can consider creating a mixtue synthesiser, (this is an idea built after a conversation with Eric Herwin) where build it through categorical sheets: $q(x) = \sum p(s) q_s(x_{rest}|s)$ Simply put, instead of approximating the total distribution we say patients in different categorical groups may follow different distributions. The problem with this approach is that the data may be split in further pieces, therefore increasing the chance overfit,copy rows, learn noisy/random correlations etc. Therefore, to begin, the next important implementation is a model that mixes CTGAN and copula.
