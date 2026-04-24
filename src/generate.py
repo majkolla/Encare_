@@ -198,7 +198,7 @@ def run_generation(
     model = BaseSynthesizer.load(model_path_obj)
     if sample_seed is not None:
         _reseed_model(model, sample_seed)
-    model_name = model.__class__.__name__.replace("Synthesizer", "").lower()
+    model_name = _model_name_for_instance(model)
     model_config = model_config_for_name(run_config, run_config.get("model", model_name))
 
     if output_path is None:
@@ -434,10 +434,13 @@ def _reseed_model(model: BaseSynthesizer, sample_seed: int) -> None:
     if hasattr(model, "rng"):
         model.rng = np.random.default_rng(sample_seed)
 
-    for attribute_name in ("copula_model", "ctgan_model"):
-        child = getattr(model, attribute_name, None)
-        if child is not None:
-            _reseed_model(child, sample_seed)
+
+def _model_name_for_instance(model: BaseSynthesizer) -> str:
+    name_by_class = {
+        "GaussianCopulaSynthesizer": "copula",
+        "IndependentBaselineSynthesizer": "baseline",
+    }
+    return name_by_class.get(model.__class__.__name__, model.__class__.__name__.replace("Synthesizer", "").lower())
 
 
 def _sha256_file(path: str | Path) -> str:

@@ -19,6 +19,8 @@ from src.eval.privacy import privacy_score
 from src.utils.types import RunResult, Schema
 
 
+
+
 def compute_total_score(
     real_df: pd.DataFrame,
     syn_df: pd.DataFrame,
@@ -69,3 +71,14 @@ def compare_runs(run_metrics_list: list[RunResult]) -> list[dict[str, Any]]:
         for run in ranked
     ]
 
+
+def _normalized_official_order_weights(weights: dict[str, float] | None = None) -> dict[str, float]:
+    source = OFFICIAL_ORDER_WEIGHTS if weights is None else weights
+    resolved = {
+        component: max(float(source.get(component, 0.0)), 0.0)
+        for component in OFFICIAL_ORDER_WEIGHTS
+    }
+    total = sum(resolved.values())
+    if total <= 0.0:
+        return OFFICIAL_ORDER_WEIGHTS.copy()
+    return {component: float(weight / total) for component, weight in resolved.items()}

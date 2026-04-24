@@ -41,25 +41,6 @@ def run_training(model_name: str, config_path: str, data_path: str) -> dict:
     model_config = model_config_for_name(run_config, model_name)
     model.fit(train_df, schema, model_config)
 
-    if (
-        model_name == "hybrid"
-        and hasattr(model, "grid_search_alpha")
-        and model_config.get("tune_alpha", True)
-    ):
-        best_alpha, alpha_results = model.grid_search_alpha(
-            train_df=train_df,
-            val_df=val_df,
-            schema=schema,
-            constraints=constraints,
-            weights=run_config["score_weights"],
-            alphas=model_config.get("alphas"),
-        )
-        ensure_dir(resolve_repo_path(run_config.get("artifact_dir", "data/artifacts")) / model_name)
-        write_json(
-            {"alpha_search": alpha_results, "best_alpha": best_alpha},
-            resolve_repo_path(run_config.get("artifact_dir", "data/artifacts")) / model_name / "hybrid_alpha_search.json",
-        )
-
     synthetic_val = generate_synthetic_dataset(
         model=model,
         real_df=train_df,
@@ -90,7 +71,7 @@ def run_training(model_name: str, config_path: str, data_path: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train one synthetic-data model on a train/validation split.")
-    parser.add_argument("--model", required=True, help="Model name: baseline, copula, ctgan, hybrid.")
+    parser.add_argument("--model", required=True, help="Model name: baseline or copula.")
     parser.add_argument("--config", required=True, help="Path to a YAML or JSON config file.")
     parser.add_argument("--data", default="data/data.csv", help="Path to the source CSV.")
     args = parser.parse_args()

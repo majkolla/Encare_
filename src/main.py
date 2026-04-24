@@ -10,7 +10,6 @@ from src.eval.diagnostics import compute_run_diagnostics
 from src.eval.reports import write_comparison_report, write_run_report
 from src.eval.score import compare_runs, compute_total_score
 from src.generate import generate_and_save_submission, generate_synthetic_dataset, write_output_notes
-from src.models.ctgan_model import CTGANSynthesizer
 from src.rules.constraints import build_default_constraints
 from src.utils.config import model_config_for_name
 from src.utils.io import ensure_dir, merge_dicts, read_config, write_json
@@ -50,45 +49,12 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
     logger.info("Loaded data with %s rows and %s columns.", len(data), len(data.columns))
 
     results: list[RunResult] = []
-    selected_params: dict[str, dict[str, float]] = {}
 
-    for model_name in run_config.get("models", ["baseline", "copula", "ctgan", "hybrid"]):
-        skip_reason = _optional_model_skip_reason(model_name)
-        if skip_reason:
-            logger.warning("Skipping %s: %s", model_name, skip_reason)
-            results.append(
-                RunResult(
-                    model_name=model_name,
-                    metrics={"total_score": float("-inf")},
-                    notes=[skip_reason],
-                )
-            )
-            continue
-
+    for model_name in run_config.get("models", ["copula"]):
         logger.info("Training %s", model_name)
         model = create_model(model_name, seed=seed)
         model_config = model_config_for_name(run_config, model_name)
         model.fit(train_df, schema, model_config)
-
-        if (
-            model_name == "hybrid"
-            and hasattr(model, "grid_search_alpha")
-            and model_config.get("tune_alpha", True)
-        ):
-            best_alpha, alpha_results = model.grid_search_alpha(
-                train_df=train_df,
-                val_df=val_df,
-                schema=schema,
-                constraints=constraints,
-                weights=run_config["score_weights"],
-                alphas=model_config.get("alphas"),
-            )
-            logger.info("Hybrid best alpha: %.2f", best_alpha)
-            selected_params[model_name] = {"alpha": float(best_alpha)}
-            write_json(
-                {"alpha_search": alpha_results, "best_alpha": best_alpha},
-                artifact_dir / "hybrid_alpha_search.json",
-            )
 
         synthetic_val = generate_synthetic_dataset(
             model=model,
@@ -126,8 +92,6 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
 
     best_model = create_model(best_result.model_name, seed=seed)
     best_config = model_config_for_name(run_config, best_result.model_name)
-    if best_result.model_name in selected_params:
-        best_config = merge_dicts(best_config, selected_params[best_result.model_name])
     best_model.fit(data, schema, best_config)
     submission_path = run_dir / f"{best_result.model_name}_submission.csv"
     _, submission_errors = generate_and_save_submission(
@@ -156,7 +120,7 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
             "privacy_min_distance_quantile": best_config.get("privacy_min_distance_quantile"),
             "mixed_column_strategy": best_config.get("mixed_column_strategy"),
             "notes": [
-                "Generated as the best-model submission from `python main.py`.",
+                "Generated as the best-model submission from `python -m src.main`.",
                 "See the paired run artifacts for validation metrics and diagnostics.",
             ],
         },
@@ -173,14 +137,6 @@ def run_pipeline(config_path: str, data_path: str) -> dict:
     }
     write_json(summary, run_dir / "summary.json")
     return summary
-
-
-def _optional_model_skip_reason(model_name: str) -> str | None:
-    if model_name not in {"ctgan", "hybrid", "adaptive_extra"}:
-        return None
-    if CTGANSynthesizer.is_backend_available():
-        return None
-    return "optional CTGAN backend is not installed; install `sdv` and `torch` to enable this model"
 
 
 def main() -> None:
