@@ -6,7 +6,7 @@ from scipy import stats
 
 from data_validation import validate_submission
 from src.data.schema import infer_schema
-from src.eval.score import compute_total_score
+from src.eval.score import compute_total_score, official_order_score_from_metrics
 from src.rules.constraints import build_default_constraints
 from src.utils.io import merge_dicts, read_config
 from src.utils.paths import resolve_repo_path
@@ -34,7 +34,7 @@ def run_evaluation_report(original_df: pd.DataFrame, synthetic_df: pd.DataFrame)
     print("\nClinical Sanity Check Results:")
     for check, passed in validations.items():
         status = "PASSED" if passed else "FAILED"
-        print(f"  {check:30s}: {status}")
+        print(f" {check:30s}: {status}")
 
 
 def run_precheck(
@@ -79,12 +79,24 @@ def run_precheck(
     )
 
     print("\nAdvanced Local Score:")
-    print(f"  Total Score     : {metrics['total_score']:.4f}")
-    print(f"  Marginal        : {metrics['marginal']['score']:.4f}")
-    print(f"  Dependency      : {metrics['dependency']['score']:.4f}")
-    print(f"  Discriminator   : {metrics['discriminator']['score']:.4f} (AUC={metrics['discriminator']['auc']:.4f})")
-    print(f"  Privacy         : {metrics['privacy']['score']:.4f}")
-    print(f"  Logic           : {metrics['logic']['score']:.4f}")
+    print(f" Total Score   : {metrics['total_score']:.4f}")
+    print(f"Marginal    : {metrics['marginal']['score']:.4f}")
+    print(f"Dependency      : {metrics['dependency']['score']:.4f}")
+    print(f"Discriminator   : {metrics['discriminator']['score']:.4f} (AUC={metrics['discriminator']['auc']:.4f})")
+    print(f"Privacy     : {metrics['privacy']['score']:.4f}")
+    print(f"Logic       : {metrics['logic']['score']:.4f}")
+
+    official_order = official_order_score_from_metrics(metrics)
+    weights = official_order["weights"]
+    print("\nOfficial-Order Local Score:")
+    print(f"  Total Score     : {official_order['total_score']:.4f}")
+    print(
+        "  Weights         : "
+        f"distribution={weights['marginal']:.2f}, "
+        f"correlation={weights['dependency']:.2f}, "
+        f"privacy={weights['privacy']:.2f}, "
+        f"discriminator={weights['discriminator']:.2f}"
+    )
 
     print("\nNote:")
     print("  This is a local proxy only. It is useful for ranking runs, not for predicting the exact hackathon score.")
