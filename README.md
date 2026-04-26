@@ -1,6 +1,6 @@
 # Encare Synthetic Data Pipeline
 
-This project generates synthetic clinical tabular data for the Encare hackathon. The best review path is the repaired Gaussian copula solution: it learns marginal distributions and cross-column dependence from `data/data.csv`, samples synthetic rows, repairs known clinical constraints, removes exact privacy matches, and writes a schema-valid CSV.
+This project generates synthetic clinical tabular data for the Encare hackathon. The recommended review path is the repaired Gaussian copula solution: it learns marginal distributions and cross-column dependence from `data/data.csv`, samples synthetic rows, repairs known clinical constraints, removes exact privacy matches, and writes a schema-valid CSV.
 
 
 ## Summary
@@ -15,7 +15,7 @@ This project generates synthetic clinical tabular data for the Encare hackathon.
 7. Apply deterministic rule repair.
 8. Drop duplicate and exact source-record matches.
 9. Coerce the final CSV to the source schema.
-10. Validate with local proxy metrics.
+10. Save the trained model artifact and generated output files.
 
 The primary model is configured by `configs/copula_best.yaml` and `configs/base.yaml`.
 
