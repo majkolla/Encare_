@@ -19,6 +19,12 @@ from src.eval.privacy import privacy_score
 from src.utils.types import RunResult, Schema
 
 
+OFFICIAL_ORDER_WEIGHTS = {
+    "marginal": 0.40,
+    "dependency": 0.30,
+    "privacy": 0.20,
+    "discriminator": 0.10,
+}
 
 
 def compute_total_score(
@@ -56,6 +62,86 @@ def compute_total_score(
         "discriminator": discriminator,
         "privacy": privacy,
         "logic": logic,
+    }
+
+
+def compute_official_order_score(
+    real_df: pd.DataFrame,
+    syn_df: pd.DataFrame,
+    schema: Schema,
+    weights: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Score in the stated competition priority order.
+
+    This intentionally excludes clinical logic from the scalar score. Missing
+    values are treated as observed structural states by the component metrics;
+    explicit "Unknown" values remain ordinary category values.
+    """
+    marginal = aggregate_marginal_score(
+        {
+            "ks": ks_by_numeric_column(real_df, syn_df, schema),
+            "wasserstein": wasserstein_by_numeric_column(real_df, syn_df, schema),
+            "tv": tv_by_categorical_column(real_df, syn_df, schema),
+            "jsd": jsd_by_categorical_column(real_df, syn_df, schema),
+        }
+    )
+    dependency = dependency_score(real_df, syn_df, schema)
+    privacy = privacy_score(real_df, syn_df, schema)
+    discriminator = compute_discriminator_auc(real_df, syn_df, schema)
+
+    ordered_weights = _normalized_official_order_weights(weights)
+    total_score = official_order_score_from_components(
+        marginal=float(marginal["score"]),
+        dependency=float(dependency["score"]),
+        privacy=float(privacy["score"]),
+        discriminator=float(discriminator["score"]),
+        weights=ordered_weights,
+    )
+
+    return {
+        "total_score": total_score,
+        "weights": ordered_weights,
+        "marginal": marginal,
+        "dependency": dependency,
+        "privacy": privacy,
+        "discriminator": discriminator,
+    }
+
+
+def official_order_score_from_components(
+    marginal: float,
+    dependency: float,
+    privacy: float,
+    discriminator: float,
+    weights: dict[str, float] | None = None,
+) -> float:
+    ordered_weights = _normalized_official_order_weights(weights)
+    return float(
+        ordered_weights["marginal"] * float(marginal)
+        + ordered_weights["dependency"] * float(dependency)
+        + ordered_weights["privacy"] * float(privacy)
+        + ordered_weights["discriminator"] * float(discriminator)
+    )
+
+
+def official_order_score_from_metrics(
+    metrics: dict[str, Any],
+    weights: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    ordered_weights = _normalized_official_order_weights(weights)
+    component_scores = {
+        "marginal": float(metrics["marginal"]["score"]),
+        "dependency": float(metrics["dependency"]["score"]),
+        "privacy": float(metrics["privacy"]["score"]),
+        "discriminator": float(metrics["discriminator"]["score"]),
+    }
+    return {
+        "total_score": official_order_score_from_components(
+            weights=ordered_weights,
+            **component_scores,
+        ),
+        "weights": ordered_weights,
+        "component_scores": component_scores,
     }
 
 
