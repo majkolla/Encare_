@@ -82,18 +82,6 @@ class Schema:
 
 
 @dataclass
-class RunResult:
-    model_name: str
-    metrics: dict[str, Any]
-    artifact_path: str | None = None
-    notes: list[str] = field(default_factory=list)
-
-    @property
-    def total_score(self) -> float:
-        return float(self.metrics.get("total_score", float("-inf")))
-
-
-@dataclass
 class Preprocessor:
     schema: Schema
     categorical_levels: dict[str, list[Any]]

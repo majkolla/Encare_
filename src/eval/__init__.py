@@ -1,2 +1,1 @@
-"""Evaluation modules for fidelity, privacy, and logic checks."""
-
+"""Privacy filtering and logic utilities for synthetic data generation."""
